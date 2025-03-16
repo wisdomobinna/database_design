@@ -1,0 +1,198 @@
+{% extends "base.html" %}
+
+{% block title %}Dashboard{% endblock %}
+
+{% block content %}
+<h2>SQL Query Dashboard</h2>
+
+<!-- Message Handling -->
+{% if error_message %}
+<div class="alert alert-danger">{{ error_message }}</div>
+{% endif %}
+
+{% if success_message %}
+<div class="alert alert-success">{{ success_message }}</div>
+{% endif %}
+
+<!-- SQL Query Input -->
+<form method="POST" class="mb-3">
+    {% csrf_token %}
+    <label for="sql_query" class="form-label">Enter SQL Query:</label>
+    <textarea name="sql_query" id="sql_query" class="form-control" rows="3">{{ query }}</textarea>
+    <button type="submit" class="btn btn-primary mt-2">Run Query</button>
+</form>
+
+<!-- Predefined Queries -->
+<h4>Quick Queries</h4>
+<form method="POST">
+    {% csrf_token %}
+    <button name="canned_query" value="monthly_trends" class="btn btn-secondary">
+        Monthly Trends
+    </button>    
+    <button name="canned_query" value="common_crime" class="btn btn-secondary">
+        Most Common Crimes
+    </button>
+    <button name="canned_query" value="peak_hours" class="btn btn-secondary">
+        Peak Crime Hours
+    </button>
+    <button name="canned_query" value="peak_days" class="btn btn-secondary">
+        Peak Crime Days
+    </button>
+    <button name="canned_query" value="hotspots_chicago" class="btn btn-secondary">
+        Crime Hostspots (Chicago)
+    </button>
+    <button name="canned_query" value="hotspots_la" class="btn btn-secondary">
+        Crime Hostspots (Los Angeles)
+    </button>
+    <button name="canned_query" value="yoy_crime" class="btn btn-secondary">
+        Year-over-Year Crime Stats
+    </button>
+    <button name="canned_query" value="crime_distribution_chicago" class="btn btn-secondary">
+        Crime Distribution (Chicago)
+    </button>
+    <button name="canned_query" value="crime_distribution_la" class="btn btn-secondary">
+        Crime Distribution (Los Angeles)
+    </button>
+    <button name="canned_query" value="crime_distribution_premise" class="btn btn-secondary">
+        Crime Distribution by Premise Type
+    </button>
+    <button name="canned_query" value="crime_season" class="btn btn-secondary">
+        Seasonal Crime Pattern
+    </button>
+</form>
+
+<!-- Results -->
+{% if results and chart_type != "heatmap"%}
+<h4 class="mt-4">Query Results</h4>
+<table class="table table-bordered">
+    <thead>
+        <tr>
+            {% for col in columns %}
+                <th>{{ col }}</th>
+            {% endfor %}
+        </tr>
+    </thead>
+    <tbody>
+        {% for row in results %}
+        <tr>
+            {% for cell in row %}
+                <td>{{ cell }}</td>
+            {% endfor %}
+        </tr>
+        {% endfor %}
+    </tbody>
+</table>
+{% endif %}
+
+<!-- Pagination Controls -->
+{% if results and results.paginator.num_pages > 1 %}
+<nav>
+    <ul class="pagination">
+        {% if results.has_previous %}
+            <li class="page-item">
+                <a class="page-link" href="?page=1&sql_query={{ query|urlencode }}">First</a>
+            </li>
+            <li class="page-item">
+                <a class="page-link" href="?page={{ results.previous_page_number }}&sql_query={{ query|urlencode }}">Previous</a>
+            </li>
+        {% endif %}
+
+        <li class="page-item active">
+            <span class="page-link">Page {{ results.number }} of {{ results.paginator.num_pages }}</span>
+        </li>
+
+        {% if results.has_next %}
+            <li class="page-item">
+                <a class="page-link" href="?page={{ results.next_page_number }}&sql_query={{ query|urlencode }}">Next</a>
+            </li>
+            <li class="page-item">
+                <a class="page-link" href="?page={{ results.paginator.num_pages }}&sql_query={{ query|urlencode }}">Last</a>
+            </li>
+        {% endif %}
+    </ul>
+</nav>
+{% endif %}
+
+{% if chart_type == "heatmap" %}
+<h4 class="mt-4">Crime Heatmap</h4>
+<div id="map" style="height: 1000px;"></div>
+
+<script src="https://maps.googleapis.com/maps/api/js?key={{ google_maps_api_key }}&libraries=visualization"></script>
+<script>
+    document.addEventListener("DOMContentLoaded", function () {
+        let heatmapData = JSON.parse('{{ graph_data|escapejs }}');
+        console.log("Heatmap Data Received:", heatmapData);  // ✅ Debugging
+
+        let centerPoint = heatmapData.length > 0 ? { lat: heatmapData[0].lat, lng: heatmapData[0].lng } : { lat: 41.8781, lng: -87.6298 };  // Default to Chicago
+
+        let map = new google.maps.Map(document.getElementById('map'), {
+            zoom: 12,
+            center: centerPoint,
+            mapTypeId: "satellite",
+        });
+
+        let cityName = heatmapData.length > 0 ? heatmapData[0].city : "Unknown";
+        let radius = cityName === "Chicago" ? 100 : 10;
+
+        let heatmapLayer = new google.maps.visualization.HeatmapLayer({
+            data: heatmapData.map(point => {
+                return {
+                    location: new google.maps.LatLng(point.lat, point.lng)
+                };
+            }),
+            radius: radius,
+            opacity: 0.7
+        });
+
+        heatmapLayer.setMap(map);
+    });
+
+</script>
+{% elif chart_type %}
+<h4 class="mt-4">Graph Visualization</h4>
+<canvas id="queryChart"></canvas>
+
+<script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+<script>
+    document.addEventListener("DOMContentLoaded", function () {
+        let graphData = JSON.parse('{{ graph_data|escapejs }}');
+        console.log("Graph Data Sent to Chart.js:", graphData);
+
+        let allData = [];
+        graphData.datasets.forEach(function(dataset) {
+            allData = allData.concat(dataset.data);
+        });
+        let dynamicMin = Math.min(...allData);
+        let dynamicMax = Math.max(...allData);
+
+    // Optionally adjust the min and max (e.g., add some padding)
+    dynamicMin = dynamicMin - (dynamicMax - dynamicMin) * 0.05;
+    dynamicMax = dynamicMax + (dynamicMax - dynamicMin) * 0.05;
+
+        if (graphData && graphData.labels.length > 0) {
+            let ctx = document.getElementById('queryChart').getContext('2d');
+            new Chart(ctx, {
+                type: "{{ chart_type }}",  // Dynamically set chart type
+                data: graphData,
+                options: {
+                    responsive: true,
+                    scales: {
+                        y: { 
+                            beginAtZero: true,
+                            min: dynamicMin,
+                            max: dynamicMax,
+                        }
+                    }
+                }
+            });
+        } else {
+            console.error("Graph Data is missing or empty!");
+        }
+    });
+</script>
+
+{% else %}
+<p>No graph available.</p>  <!-- ✅ Debugging -->
+{% endif %}
+
+{% endblock %}
